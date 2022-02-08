@@ -1,0 +1,197 @@
+---
+title: "data"
+author: "Caner Canlıer"
+date: "1/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(effects)
+library(tidyverse)
+library(boot)
+library(caret)
+library(magrittr)
+library(pander)
+library("readxl")
+library(modelr)
+library(stringr)
+```
+
+# Data Cleaning
+
+```{r}
+d <- read.csv("C:/Users/ccane/Desktop/data.csv")
+```
+Remove the Q.I and VCL because it is useless.
+
+```{r}
+d2<-d %>% select(-Q1I,-Q2I,-Q3I,-Q4I,-Q5I,-Q6I,-Q7I,-Q8I,-Q9I,-Q10I,-Q11I,-Q12I,-Q13I,-Q14I,-Q15I,-Q16I,-Q17I,-Q18I,-Q19I,-Q20I,-Q21I,-Q22I,-Q23I,-Q24I,-Q25I,-Q26I,-Q27I,-Q28I,-Q29I,-Q30I,-Q31I,-Q32I,-Q33I,-Q34I,-Q35I,-Q36I,-Q37I,-Q38I,-Q39I,-Q40I,-Q41I,-Q42I,-VCL1,-VCL2,-VCL3,-VCL4,-VCL5,-VCL6,-VCL7,-VCL8,-VCL9,-VCL10,-VCL11,-VCL12,-VCL13,-VCL14,-VCL15,-VCL16)
+
+```
+
+we can check the relation between time of giving an answer and the answers they gave.
+
+```{r}
+#d2 %>% ggplot(aes(Q1E,Q1A)) + geom_point() +geom_smooth()
+#d2 %>% ggplot(aes(Q2E,Q2A)) + geom_point() +geom_smooth()
+#d2 %>% ggplot(aes(Q20E,Q20A)) + geom_point() +geom_smooth()
+#d2 %>% ggplot(aes(Q30E,Q30A)) + geom_point() +geom_smooth()
+#d2 %>% ggplot(aes(Q40E,Q40A)) + geom_point() +geom_smooth()
+```
+
+It seems like there is no clear relationship between them.
+Let's extract them for the sake of simplicity.
+
+```{r}
+d3<-d2 %>% select(-Q1E,-Q2E,-Q3E,-Q4E,-Q5E,-Q6E,-Q7E,-Q8E,-Q9E,-Q10E,-Q11E,-Q12E,-Q13E,-Q14E,-Q15E,-Q16E,-Q17E,-Q18E,-Q19E,-Q20E,-Q21E,-Q22E,-Q23E,-Q24E,-Q25E,-Q26E,-Q27E,-Q28E,-Q29E,-Q30E,-Q31E,-Q32E,-Q33E,-Q34E,-Q35E,-Q36E,-Q37E,-Q38E,-Q39E,-Q40E,-Q41E,-Q42E,-introelapse,-testelapse,-surveyelapse,-source)
+```
+
+
+```{r}
+#correcting spellings of majors
+d3 <- within(d3,{
+    major[major == 'cs'] <- "Computer science"
+    major[major == 'computer science'] <- "Computer science"
+    major[major == 'Business'] <- "business administration"
+    major[major == 'PSYCHOLOGY'] <- "Psychology"
+})
+d3$major<- as.factor(d3$major)
+```
+
+```{r}
+d4<- d %>% select(Q1A,Q2A,Q3A,Q4A,Q5A,Q6A,Q7A,Q8A,Q9A,Q10A,Q11A,Q12A,Q13A,Q14A,Q15A,Q16A,Q17A,Q18A,Q19A,Q20A,Q21A,Q22A,Q23A,Q24A,Q25A,Q26A,Q27A,Q28A,Q29A,Q30A,Q31A,Q32A,Q33A,Q34A,Q35A,Q36A,Q37A,Q38A,Q39A,Q40A,Q41A,Q42A)
+
+a1<-ifelse(d4==1,0,ifelse(d4==2,1,ifelse(d4==3,2,3)))
+sums<-rowSums(a1[,])
+percen<- (sums)/126
+
+d5<-d3 %>% select(-Q1A,-Q2A,-Q3A,-Q4A,-Q5A,-Q6A,-Q7A,-Q8A,-Q9A,-Q10A,-Q11A,-Q12A,-Q13A,-Q14A,-Q15A,-Q16A,-Q17A,-Q18A,-Q19A,-Q20A,-Q21A,-Q22A,-Q23A,-Q24A,-Q25A,-Q26A,-Q27A,-Q28A,-Q29A,-Q30A,-Q31A,-Q32A,-Q33A,-Q34A,-Q35A,-Q36A,-Q37A,-Q38A,-Q39A,-Q40A,-Q41A,-Q42A,-major) %>% mutate(perc=percen)%>% relocate(perc, .before = country)
+
+d5<-d5 %>% relocate(age, .after = perc)
+
+names(d5)[4]<- "Extraverted"
+names(d5)[5]<- "Critical"
+names(d5)[6]<- "Dependable"
+names(d5)[7]<- "Anxious"
+names(d5)[8]<- "Open_to_new_experiences"
+names(d5)[9]<- "Quite"
+names(d5)[10]<- "Warm"
+names(d5)[11]<- "Careless"
+names(d5)[12]<- "Calm"
+names(d5)[13]<- "Uncreative"
+
+d5[3:26]<-d5[3:26] %>% mutate_if(is.numeric, factor)
+```
+
+# Data Rebuilding
+
+```{r}
+d5 %>% summary()
+
+d5$age <- ifelse(d5$age>1000,2021-d5$age,d5$age) #some people write their birth year to age section.
+
+d5<-d5[!(d5$age>160 |is.na(d5$country)|d5$education==0 |d5$gender==0|d5$Extraverted ==0 |d5$religion==0|d5$urban==0|d5$Anxious==0|d5$Critical==0 |d5$Dependable==0 |d5$Open_to_new_experiences==0 |d5$Quite==0 |d5$Warm==0|d5$Careless==0|d5$Calm==0|d5$Uncreative==0|d5$hand==0|d5$engnat==0|d5$orientation ==0|d5$voted ==0|d5$married ==0) ,] #Delete meaningless data
+```
+
+# Data Exploration
+
+```{r}
+d5 %>% ggplot(aes(orientation,perc)) + geom_boxplot(aes(fill=gender)) #Relationship between anxiety, sexual oriantation and gender.
+ggplot(d5,aes(Anxious,perc)) + geom_boxplot() # If people feeling anxious increases the perc of anxiousness increases.
+d5 %>% ggplot(aes(education,perc)) + geom_boxplot(aes(fill=voted)) + facet_grid(~voted)
+```
+
+
+```{r}
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+
+d5[-c(3)][1:12] %>% 
+  rev() %>% 
+  pairs(diag.panel = panel.hist, 
+        upper.panel = function(...) panel.smooth(..., lwd=2, col="gray"), 
+        lower.panel = panel.cor) # It seems like Anxious and Calm variables are correlated with the response.
+```
+
+```{r}
+d5[c(1,13:19)] %>% 
+  rev() %>% 
+  pairs(diag.panel = panel.hist, 
+        upper.panel = function(...) panel.smooth(..., lwd=2, col="gray"), 
+        lower.panel = panel.cor)
+
+d5[c(1,20:26)] %>% 
+  rev() %>% 
+  pairs(diag.panel = panel.hist, 
+        upper.panel = function(...) panel.smooth(..., lwd=2, col="gray"), 
+        lower.panel = panel.cor) #It seems like religion and race are correlated somehow.
+```
+
+# Log tranformation
+
+```{r}
+d6 <- d5 %>%
+  mutate_at(vars(c(age)),log) %>% 
+  rename_at(vars(c(age)), ~paste0("log",.))
+
+```
+
+
+# Linear Model
+
+```{r}
+model<-lm(perc~.,data=d6)
+model %>% summary()
+```
+
+```{r}
+model2<-model %>% step(type="forward",trace=FALSE)
+model2 %>% summary()
+plot(model2) #Check residuals to make sure it satisfies normality assumptions.
+```
+
+```{r}
+model3<-update(model2,.~.+Calm:Anxious+Dependable:Uncreative+Critical:Warm+Open_to_new_experiences:education+logage:Warm+logage:gender+logage:orientation+gender:orientation+Warm:Careless+Dependable:Extraverted+logage:religion+logage:Anxious+Anxious:Uncreative+Anxious:Extraverted+Anxious:Careless+Uncreative:Critical+Anxious:Critical)
+model3 %>% summary()
+```
+
+```{r}
+library(caret)
+index = sample(1:nrow(d6), 0.7*nrow(d6)) #70% train 30% test
+train = d6[index,] # Create the training data 
+test = d6[-index,]
+
+predictions<- model3 %>% predict(test)
+data.frame( R2 = R2(predictions, test$perc),
+            RMSE = RMSE(predictions, test$perc),
+            MAE = MAE(predictions, test$perc))
+
+RMSE(predictions, test$perc)/mean(test$perc) #prediction error
+```
+
+
+
+
+
+
+

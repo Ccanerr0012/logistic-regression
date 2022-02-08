@@ -1,0 +1,377 @@
+---
+title: "Ornek Soru - Logistic Regression"
+author: "Caner Canlıer"
+date: "1/6/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+d <- read.csv("https://stats.idre.ucla.edu/stat/data/binary.csv")
+library(car)
+library(effects)
+library(tidyverse)
+library(boot)
+library(caret)
+library(magrittr)
+library(pander)
+library("readxl")
+library(modelr)
+
+```
+# Data Exploration
+
+```{r}
+d$rank<-as.factor(d$rank)
+xtabs(~admit+rank,d) %>% summary()
+```
+We can check if GRE and GPA are independent from admit  by using Chi-squared test and cuting income into 3 levels.
+```{r}
+d$cut_gpa<- d$gpa %>% cut(breaks=c(1.99,2.99,3.49,4),labels=c("satisfactory","honor","high_honor"))
+xtabs(~admit+cut_gpa,d) %>% summary()
+```
+
+```{r}
+d$cut_gre<- d$gre %>% cut(breaks=c(0,quantile(d$gre,seq(3)/3)),labels=c("L","M","H")) #We make it logistic
+xtabs(~admit+cut_gre,d) %>% summary()
+```
+Since p value is small for each variable, they are not independent from admit response.
+
+```{r}
+ggplot(d,aes(gre,gpa))+ geom_point(aes(color=admit))+geom_smooth()+ggtitle("label")
+ggplot(d,aes(admit,gpa)) + geom_boxplot(aes(group=admit,fill=admit)) + facet_grid(~rank)
+ggplot(d,aes(admit,gre)) + geom_boxplot(aes(group=admit,fill=admit)) + facet_grid(~rank)
+
+library(popbio)
+logi.hist.plot(d$gre, d$admit, boxp = FALSE, type = "hist", col = "gray")
+logi.hist.plot(d$gpa, d$admit, boxp = FALSE, type = "hist", col = "gray")
+```
+
+Probability of getting admited increases as in the graph if gpa and gre increase.
+
+Admited people gets higher gre scores and have higher gpa.
+
+```{r}
+car::scatterplot(admit ~ gre| rank, data=d, regLine=FALSE, log="x", main = "Log scale")
+d %>% summary()
+```
+rank 1 people's probability of getting admited might be more than others.
+
+```{r}
+plot(admit ~ gre, data = d, col = "grey", pch = 20, cex = 1.5,
+     main = "Salaries at Initech, By Seniority")
+fitted<-glm(admit ~ gre, data = d,family="binomial")
+abline(fitted, col = "darkorange", lwd = 2)
+```
+
+Two clusters are apparent. They are characterized by income. They most likely correspond to student and non-student customers.
+
+```{r}
+d %>% ggplot(aes(gre,gpa)) +
+  geom_density2d(aes(col=interaction(admit)))+ggtitle("Density Graph")
+
+d %>% 
+  ggplot(aes(gre, gpa)) +
+  # geom_point() +
+  geom_density2d_filled()
+```
+
+```{r}
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+
+d %>% 
+  rev() %>% 
+  pairs(diag.panel = panel.hist, 
+        upper.panel = function(...) panel.smooth(..., lwd=2, col="gray"), 
+        lower.panel = panel.cor)
+
+d<-d %>% select(-cut_gre,-cut_gpa)
+```
+Gpa and gre don't seem normally distributed so we need to make them normal.
+
+## Power tranform
+
+To increase the symmetry of the distribution of the features and make it more normal I will apply power traformation.
+
+```{r}
+d2 <- d %>% 
+  select(-rank, -admit)
+
+res_pt<-powerTransform(d2)
+summary(res_pt)$tests
+```
+
+According to coefficients we can say that we need power transformation. (BU ÖRNEKTE GERKEMİYO)
+
+```{r}
+d2pt<-bcPower(d2,lambda=coef(res_pt,round=TRUE)) %>% set_names(paste0("pt",names(d2)))
+
+d_pt<- data.frame(rank=d$rank,admit=d$admit,d2pt)
+```
+
+
+# Model
+
+```{r}
+res_glm<-glm(admit~. , data=d_pt , family=binomial)
+res_glm2<-glm(admit~. , data=d_pt , family=binomial(link = "probit"))
+glm3 <- glm(admit ~ ., d, family = binomial(link = "logit"))
+AIC(res_glm,res_glm2,glm3) #res_glm is better so we use it.
+
+ggplot(d_pt, aes(x=ptgre, y=admit)) + 
+  geom_point(alpha=.5) +
+  stat_smooth(method="glm", se=FALSE, method.args = list(family=binomial),
+              col="red", lty=2)
+```
+
+First one is better so we will use it as our base model.
+
+```{r}
+lmod2 <- update(res_glm, .~.*+ptgpa+.*ptgre)
+summary(lmod2)
+```
+
+As you can see according to z test all variables are significant in the model. Now we can compare them using anova()
+
+```{r}
+anova(res_glm,lmod2,test="LRT")
+
+```
+
+#### $H_0$: We should use the simple model. $H_a$: We should use the complex model. According LRT test we fail to reject the null hypothesis p value is not small. So, we can use the smaller model in preference to the larger model.
+
+
+### Yorum
+
+```{r}
+res_glm %>% summary()
+```
+
+
+1- Each one-unit change in gre will increase the log odds of getting admit by 0.002, and its p-value indicates that it is somewhat significant in determining the admit.
+
+2- Each unit increase in GPA increases the log odds of getting admit by 0.80 and p-value indicates that it is somewhat significant in determining the admit.
+
+3- The interpretation of rank is different from others, going to rank-2 college from rank-1 college will decrease the log odds of getting admit by -0.67. Going from rank-2 to rank-3 will decrease it by -1.340.
+
+4- Pr(>|z|): The p-value corresponding to the z-statistic. The smaller the p-value, the more significant the estimate is.
+
+## Quadratic term check
+
+```{r}
+residualPlots(res_glm, type = "rstudent", ask =FALSE, id = list(method = list("x","y"), n = 1, col ="red"), col = "gray") #havalısı
+```
+
+```{r}
+predictorEffects(res_glm, resid=TRUE) %>% plot()
+```
+
+We can add quadratic terms for gre,gpa and rank?
+
+```{r}
+quad<-update(res_glm,.~.+I(ptgre^2)+I(ptgpa^2))
+quad2<-quad %>% step(trace=FALSE) 
+residualPlots(quad2,type="rstudent")
+anova(res_glm,quad,quad2, test="Chi")
+AIC(res_glm,quad,quad2)
+```
+
+NO NEED TO ADD QUADRATIC TERMS BECAUSE THEY DISTORT THE RESIDUALS. WE CONTINUE WITH OUR BASE MODEL.
+
+## Interaction check
+
+```{r}
+effect(c("ptgre", "ptgpa"), res_glm, resid=TRUE) %>% plot()
+effect(c("ptgpa", "ptgre"), res_glm, resid=TRUE) %>% plot()
+effect(c("ptgpa", "rank"), res_glm, resid=TRUE) %>% plot()
+effect(c("rank", "ptgre"), res_glm, resid=TRUE) %>% plot
+effect(c("ptgpa", "ptgre","rank"), res_glm, resid=TRUE) %>% plot()
+```
+
+we can add some interactions according to effect plots.
+
+```{r}
+update(res_glm,.~.^2) %>% step(trace=FALSE)
+res_glm2<-update(res_glm,.~.+ptgre:ptgpa) %>% step(trace=FALSE)
+AIC(res_glm2,res_glm)
+anova(res_glm,res_glm2, test="Chi")
+```
+
+Our second model is slightly better than the first model.
+
+## Influential point check
+
+```{r}
+car::influenceIndexPlot(res_glm2)
+plot(res_glm2)
+```
+
+* We noticed a outlying cases 316. Wondered if it is also influential. To check that, let us compare two models with and without that case:
+
+```{r}
+car::compareCoefs(res_glm2, update(res_glm2, subset = -c(316)))
+res_glm3<-update(res_glm2, subset = -c(316))
+```
+
+Note that coef's of predictors in two models do not differ a bit. Therefore, 316 might be influential so I get rid of it.
+```{r}
+plot(res_glm3)
+```
+
+# Goodness of Fit Test
+
+Hosmer-Lemeshow test showed that the model fit data well.
+
+```{r}
+ResourceSelection::hoslem.test(d_pt$admit, fitted(res_glm2), g=10)
+```
+
+```{r}
+library(vcdExtra)
+HLtest(res_glm)
+HLtest(res_glm2)
+HLtest(res_glm3)
+```
+
+Since p value is larger in our third model we can say that third model is the best fit to data.
+
+# Analysis
+
+## predict
+
+```{r}
+d_pt<-d %>% slice(-316)
+pred_glm<-predict(res_glm,data=d,type="response") 
+```
+
+```{r}
+d$admit<-as.factor(d$admit)
+caret::confusionMatrix(factor(ifelse(pred_glm >= 0.5, 1, 0)), d$admit)
+d %>% summary()
+```
+Our accurcy is 0.71 which is not bad and our p value is small.
+
+## cross validated
+
+```{r}
+library(caret)
+
+index = sample(1:nrow(d), 0.7*nrow(d)) #70% train 30% test
+train = d_pt[index,] # Create the training data 
+test = d_pt[-index,]
+
+train.control<-trainControl(method="cv",number=5)
+d_pt$admit<-factor(ifelse(d_pt$admit==1,1,0))
+model <- train(admit~.,data=d_pt,method="glm",family="binomial",trControl= train.control)
+
+1-model$results$Accuracy #Train cross validation error
+```
+Test Error:
+```{r}
+predicted_model<- predict(model,newdata=test,type="raw")
+mean(test$admit!=predicted_model) #Test cross validation error
+```
+
+ANOTHER Cross Validation
+
+```{r}
+nfolds <- 10
+folds <- rep(seq(10), len=nrow(d)) %>% sample()
+
+error_array <- rep(NA, nfolds)
+
+for (i in seq(nfolds)){
+  train <- d[folds != i,]
+  test <- d[folds == i,]
+  
+  res <- update(res_glm, data = train)
+  
+  error_array[i] <- tibble(pred =predict(res, newdata = test, type = "response")) %>% 
+  mutate(pred_label = ifelse(pred >= 0.5, "Yes", "No"),
+         admit = test$admit) %>% 
+  xtabs(~ admit + pred_label, .) %>% 
+  prop.table() %>% 
+  diag() %>% 
+  sum() %>% 
+  {1- .}
+}
+
+(m <- error_array %>% mean())
+(s <- error_array %>% sd() %>% `/` (sqrt(nfolds))) # se for misclassification rate
+m + c(-1,1)*2*s # 95% cı for misclassification rate on unseen data
+```
+
+
+
+## Calculating confidence intervals for the predicted probabilities
+
+```{r}
+newdata1<- data.frame(ptgre=mean(d_pt$gre),ptgpa=mean(d_pt$gpa),rank=factor(1:4))
+newdata1$prank<-predict(res_glm3,newdata=newdata1,type = "response")
+newdata1
+```
+
+In the above output we see that the predicted probability of being accepted into a graduate program is 0.74 for students from the highest prestige undergraduate institutions (rank=1), and 0.37 for students from the lowest ranked institutions (rank=4), holding gre and gpa at their means.
+
+
+We can do something very similar to create a table of predicted probabilities varying the value of gre and rank: 
+
+```{r}
+newdata2 <- data.frame(ptgre = seq(min(d$gre),max(d$gre),len=100),ptgpa=mean(d$gpa),rank = factor(rep(1:4, each = 100)))
+
+res_pred<-predict(res_glm,newdata=newdata2,se.fit=TRUE) #predictledik
+
+alpha <- .05
+
+dlink = res_pred$fit
+se = res_pred$se.fit
+upper = (dlink + qnorm(1-alpha/2)*se) %>% plogis()
+lower = (dlink - qnorm(1-alpha/2)*se) %>% plogis()
+prob<- (dlink) %>% plogis
+
+newdata <- newdata2 %>% mutate(prob=prob,upper=upper,lower=lower,dlink=dlink,se=se)
+newdata
+```
+
+Ploting
+
+```{r}
+newdata %>% 
+  ggplot(aes(ptgre,prob)) + geom_ribbon(aes(ymin=lower, ymax=upper, fill = rank), alpha=0.2) + geom_line(aes(colour=rank))+ labs(y="Predicted success probability")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
